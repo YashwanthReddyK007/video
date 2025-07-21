@@ -1,8 +1,8 @@
-streamlit==1.34.0
-torch==2.2.2
-torchvision==0.17.2
-ultralytics==8.3.30   # YOLOv11
-open_clip_torch==2.24.0
+streamlit==1.36.0
+ultralytics==8.3.0
+torch==2.3.1
+torchvision==0.18.1
 faiss-cpu==1.7.4
+open-clip-torch==2.24.0
 Pillow==10.3.0
-opencv-python-headless==4.10.0.84
+opencv-python-headless==4.9.0.80
