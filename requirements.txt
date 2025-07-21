@@ -1,7 +1,9 @@
-streamlit==1.32.2
-opencv-python-headless==4.10.0.84
-Pillow==10.3.0
-numpy==1.26.4
+streamlit==1.35.0
 torch==2.3.0
 torchvision==0.18.0
-git+https://github.com/facebookresearch/detectron2.git
+ultralytics==8.3.2
+open_clip_torch==2.24.0
+Pillow==10.3.0
+faiss-cpu==1.7.4
+opencv-python-headless==4.10.0.84
+numpy==1.26.4
