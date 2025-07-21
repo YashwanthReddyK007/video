@@ -1,3 +1,7 @@
+import os
+os.system("pip uninstall -y opencv-python opencv-contrib-python && pip install --no-deps --force-reinstall opencv-python-headless==4.9.0.80")
+
+
 import streamlit as st
 import os, tempfile, json, shutil
 import torch
