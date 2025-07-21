@@ -6,8 +6,8 @@ from PIL import Image
 from collections import Counter
 import faiss
 import open_clip
-from ultralytics import YOLO
 import cv2
+from ultralytics import YOLO
 
 # =======================
 # SETTINGS
@@ -16,28 +16,26 @@ FRAMES_FOLDER = "frames"
 os.makedirs(FRAMES_FOLDER, exist_ok=True)
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-st.set_page_config(page_title="📷🎥 Search with YOLOv11 + CLIP", layout="wide")
-st.title("📷🎥🔎 Image & Video Search with YOLOv11 + CLIP")
+st.set_page_config(page_title="📷 Video & Image Search", layout="wide")
+st.title("📷🔎 Search with YOLOv11 + CLIP + FAISS")
 
 # =======================
 # LOAD MODELS
 # =======================
 if "yolo_model" not in st.session_state:
-    st.session_state.yolo_model = YOLO("yolov11n.pt")  # ✅ use YOLOv11
+    st.session_state.yolo_model = YOLO("yolo11n.pt")  # place yolo11n.pt in project folder
 yolo_model = st.session_state.yolo_model
 
 @st.cache_resource
 def load_clip():
-    model, _, preprocess = open_clip.create_model_and_transforms(
-        "ViT-B-32", pretrained="openai"
-    )
+    model, _, preprocess = open_clip.create_model_and_transforms("ViT-B-32", pretrained="openai")
     tokenizer = open_clip.get_tokenizer("ViT-B-32")
     return model.to(device).eval(), preprocess, tokenizer
 
 clip_model, clip_preprocess, tokenizer = load_clip()
 
 # =======================
-# HELPER FUNCTIONS
+# FUNCTIONS
 # =======================
 def detect_objects(img_path):
     results = yolo_model(img_path, conf=0.3, verbose=False)
@@ -66,12 +64,9 @@ def extract_frames(video_path, every_n=30):
         if not ret:
             break
         if count % every_n == 0:
-            # ✅ convert BGR to RGB to avoid blank image issue
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            img = Image.fromarray(frame_rgb)
-            fname = f"{os.path.splitext(os.path.basename(video_path))[0]}_{count}.jpg"
+            fname = f"{os.path.basename(video_path)}_{count}.jpg"
             fpath = os.path.join(FRAMES_FOLDER, fname)
-            img.save(fpath)
+            cv2.imwrite(fpath, frame)
             saved.append(fname)
         count += 1
     cap.release()
@@ -80,64 +75,47 @@ def extract_frames(video_path, every_n=30):
 # =======================
 # UPLOAD SECTION
 # =======================
-uploaded_images = st.file_uploader(
-    "Upload images", type=["jpg", "jpeg", "png"], accept_multiple_files=True
-)
-uploaded_videos = st.file_uploader(
-    "Upload videos", type=["mp4", "avi", "mov"], accept_multiple_files=True
-)
+st.header("📤 Upload Images or Videos")
+uploaded_files = st.file_uploader("Upload files", type=["jpg", "jpeg", "png", "mp4"], accept_multiple_files=True)
 
-all_filenames = []
-all_objects = {}
-all_embeddings = []
+if uploaded_files:
+    all_filenames, all_objects, all_embeddings = [], {}, []
 
-# --- Process Images ---
-if uploaded_images:
-    for image_file in uploaded_images:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(image_file.name)[1]) as tmp:
-            tmp.write(image_file.read())
+    for up in uploaded_files:
+        ext = os.path.splitext(up.name)[1].lower()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(up.read())
             tmp_path = tmp.name
 
-        dst_path = os.path.join(FRAMES_FOLDER, os.path.basename(tmp_path))
-        shutil.move(tmp_path, dst_path)
-        all_filenames.append(os.path.basename(tmp_path))
+        if ext in [".jpg", ".jpeg", ".png"]:
+            # move image
+            fname = os.path.basename(tmp_path)
+            dst = os.path.join(FRAMES_FOLDER, fname)
+            shutil.move(tmp_path, dst)
+            frames = [fname]
+        else:
+            # video -> extract frames
+            frames = extract_frames(tmp_path)
 
-        objs = detect_objects(dst_path)
-        all_objects[os.path.basename(tmp_path)] = objs
-        emb = encode_image(dst_path)
-        all_embeddings.append(emb)
-
-# --- Process Videos ---
-if uploaded_videos:
-    for video_file in uploaded_videos:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(video_file.name)[1]) as tmp:
-            tmp.write(video_file.read())
-            tmp_path = tmp.name
-
-        st.write(f"⏳ Extracting frames from {video_file.name}...")
-        frames = extract_frames(tmp_path, every_n=30)
-        for f in frames:
-            img_path = os.path.join(FRAMES_FOLDER, f)
-            objs = detect_objects(img_path)
-            all_objects[f] = objs
-            emb = encode_image(img_path)
+        for frame in frames:
+            fpath = os.path.join(FRAMES_FOLDER, frame)
+            objs = detect_objects(fpath)
+            all_objects[frame] = objs
+            emb = encode_image(fpath)
             all_embeddings.append(emb)
-            all_filenames.append(f)
-
-# --- Save metadata if anything was uploaded ---
-if uploaded_images or uploaded_videos:
-    with open("metadata.txt", "w") as f:
-        for m in all_filenames:
-            f.write(f"{m}\n")
-    with open("objects.json", "w") as f:
-        json.dump(all_objects, f, indent=2)
+            all_filenames.append(frame)
 
     if all_embeddings:
+        with open("metadata.txt", "w") as f:
+            for m in all_filenames:
+                f.write(f"{m}\n")
+        with open("objects.json", "w") as f:
+            json.dump(all_objects, f, indent=2)
         dim = all_embeddings[0].shape[1]
         index = faiss.IndexFlatIP(dim)
         index.add(np.vstack(all_embeddings))
         faiss.write_index(index, "media_index.faiss")
-        st.success("✅ Media processed successfully! You can now search.")
+        st.success("✅ Processing done! You can search now.")
     else:
         st.error("⚠️ No embeddings created.")
 
@@ -145,10 +123,9 @@ if uploaded_images or uploaded_videos:
 # SEARCH SECTION
 # =======================
 st.markdown("---")
-st.header("🔎 Search Media")
-
+st.header("🔎 Search")
 if os.path.exists("media_index.faiss") and os.path.exists("metadata.txt"):
-    query = st.text_input("Enter a description (e.g. 'car', 'dog'):")
+    query = st.text_input("Enter a description to search:")
     if query:
         index = faiss.read_index("media_index.faiss")
         metadata = [line.strip() for line in open("metadata.txt")]
@@ -160,41 +137,36 @@ if os.path.exists("media_index.faiss") and os.path.exists("metadata.txt"):
             tfeat /= tfeat.norm(dim=-1, keepdim=True)
 
         D, I = index.search(tfeat.cpu().numpy(), k=5)
-
-        # Show results only if similarity score > threshold
-        threshold = 0.25
-        filtered = [(idx, score) for idx, score in zip(I[0], D[0]) if score > threshold]
-
-        if filtered:
-            st.subheader(f"Top matches for **'{query}'**:")
-            for idx, score in filtered:
-                fname = metadata[idx]
-                img_path = os.path.join(FRAMES_FOLDER, fname)
-                if os.path.exists(img_path):
-                    st.image(img_path, caption=f"{fname} (score {score:.3f})", width=400)
-                else:
-                    st.write(f"❌ Image not found: {img_path}")
-                st.write("Objects detected:")
+        # threshold to ignore irrelevant matches
+        st.subheader(f"Results for **'{query}'**:")
+        shown = False
+        for idx, score in zip(I[0], D[0]):
+            if score < 0.3:  # ignore low similarity
+                continue
+            shown = True
+            fname = metadata[idx]
+            img_path = os.path.join(FRAMES_FOLDER, fname)
+            if os.path.exists(img_path):
+                st.image(img_path, caption=f"{fname} (score {score:.3f})", width=400)
                 for obj in objects_map.get(fname, []):
                     st.write(f"- **{obj['label']}** ({obj['conf']:.2f})")
-        else:
-            st.error("❌ No results found for your query.")
-else:
-    st.info("Upload and process images or videos first.")
+        if not shown:
+            st.warning("❌ No relevant results found.")
 
 # =======================
-# SUMMARY
+# SUMMARY SECTION
 # =======================
 st.markdown("---")
-st.header("📋 Summarize All Uploaded Media")
+st.header("📋 Summary")
 if st.button("Summarize Objects"):
     if os.path.exists("objects.json"):
         objects_map = json.load(open("objects.json"))
         all_labels = [obj["label"] for objs in objects_map.values() for obj in objs]
         if not all_labels:
-            st.warning("No objects detected yet.")
+            st.warning("No objects detected.")
         else:
             counts = Counter(all_labels)
-            st.write("✅ **Summary of objects detected:**")
             for label, count in counts.most_common():
-                st.write(f"- **{label}** appears in {count} image(s)/frame(s)")
+                st.write(f"- **{label}** appears in {count} frames")
+    else:
+        st.info("No objects data yet.")
